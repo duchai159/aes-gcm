@@ -21,58 +21,151 @@ s_box = bytearray.fromhex(s_box_string)
 
 
 def sub_word(word: [int]) -> bytes:
+    """
+    Hàm thay thế các byte trong một từ (word) bằng các giá trị tương ứng từ hộp S-box (s_box).
+    
+    Parameters:
+    - word: Một danh sách các số nguyên đại diện cho các byte (4 phần tử).
+
+    Returns:
+    - substituted_word: Một đối tượng bytes, trong đó mỗi byte của từ ban đầu được thay thế bằng giá trị trong S-box.
+    """
+    # Dùng hộp S-box (s_box) để thay thế từng byte trong từ.
     substituted_word = bytes(s_box[i] for i in word)
     return substituted_word
 
 
 def rcon(i: int) -> bytes:
-    # From Wikipedia
+    """
+    Hàm lấy hằng số vòng (round constant) Rcon cho một vòng cụ thể trong thuật toán AES.
+
+    Parameters:
+    - i: Số nguyên đại diện cho vòng hiện tại (bắt đầu từ 1).
+
+    Returns:
+    - rcon_value: Một đối tượng bytes (4 byte), trong đó byte đầu tiên là giá trị Rcon tương ứng,
+      các byte còn lại là 0.
+    """
+    # Bảng tra cứu Rcon, lưu các giá trị hằng số vòng.
     rcon_lookup = bytearray.fromhex('01020408102040801b36')
+    
+    # Tìm giá trị Rcon tương ứng với vòng i (lưu ý: chỉ số bắt đầu từ 1).
     rcon_value = bytes([rcon_lookup[i-1], 0, 0, 0])
     return rcon_value
 
 
 def xor_bytes(a: bytes, b: bytes) -> bytes:
+    """
+    Thực hiện phép XOR từng byte giữa hai chuỗi byte (bytes) đầu vào.
+
+    Parameters:
+    - a: Chuỗi byte đầu tiên.
+    - b: Chuỗi byte thứ hai.
+
+    Returns:
+    - Một chuỗi byte mới, trong đó mỗi byte là kết quả của phép XOR giữa các byte tương ứng
+      từ hai chuỗi `a` và `b`.
+
+    Lưu ý:
+    - Cả hai chuỗi `a` và `b` phải có cùng độ dài.
+    """
+    # Thực hiện phép XOR giữa các byte tương ứng của a và b.
     return bytes([x ^ y for (x, y) in zip(a, b)])
 
 
 def rot_word(word: [int]) -> [int]:
+    """
+    Thực hiện phép xoay trái một từ (word) bao gồm 4 byte.
+
+    Parameters:
+    - word: Danh sách chứa 4 số nguyên đại diện cho một từ.
+
+    Returns:
+    - Một danh sách mới, trong đó byte đầu tiên được chuyển ra cuối,
+      và các byte còn lại được dời sang trái.
+    """
+    # Xoay trái: chuyển byte đầu tiên ra cuối danh sách.
     return word[1:] + word[:1]
 
 
-def key_expansion(key: bytes, nb: int = 4) -> [[[int]]]:
 
+def key_expansion(key: bytes, nb: int = 4) -> [[[int]]]:
+    """
+    Mở rộng khóa đầu vào thành một loạt các khóa con sử dụng trong các vòng mã hóa AES.
+
+    Parameters:
+    - key: Chuỗi byte đại diện cho khóa gốc (có độ dài 16, 24 hoặc 32 byte tương ứng với 128, 192 hoặc 256 bit).
+    - nb: Số cột (32-bit words) trong mỗi trạng thái (state). Giá trị mặc định là 4.
+
+    Returns:
+    - Một danh sách các khóa con (subkeys) được biểu diễn dưới dạng mảng 4x4, mỗi mảng ứng với một vòng trong AES.
+    """
+
+    # Số lượng từ (32-bit words) trong khóa gốc.
     nk = len(key) // 4
 
+    # Độ dài khóa (tính bằng bit).
     key_bit_length = len(key) * 8
 
+    # Xác định số vòng mã hóa (nr) dựa trên độ dài khóa.
     if key_bit_length == 128:
-        nr = 10
+        nr = 10  # 10 vòng mã hóa cho khóa 128-bit.
     elif key_bit_length == 192:
-        nr = 12
+        nr = 12  # 12 vòng mã hóa cho khóa 192-bit.
     else:  # 256-bit keys
-        nr = 14
+        nr = 14  # 14 vòng mã hóa cho khóa 256-bit.
 
+    # Chuyển đổi khóa gốc thành trạng thái ban đầu (mảng các từ 32-bit).
     w = state_from_bytes(key)
 
+    # Mở rộng các từ để tạo các khóa con.
     for i in range(nk, nb * (nr + 1)):
-        temp = w[i-1]
+        temp = w[i - 1]  # Lấy từ cuối cùng đã sinh ra.
         if i % nk == 0:
+            # Xử lý đặc biệt khi chỉ số i chia hết cho nk:
+            # 1. Xoay trái từ `temp` (rot_word).
+            # 2. Áp dụng hàm thế (substitution) trên từ đã xoay (sub_word).
+            # 3. XOR với giá trị Rcon (round constant).
             temp = xor_bytes(sub_word(rot_word(temp)), rcon(i // nk))
         elif nk > 6 and i % nk == 4:
+            # Với các khóa 256-bit, áp dụng hàm thế (sub_word) với từ thứ 4.
             temp = sub_word(temp)
+        # Tính toán từ mới bằng cách XOR với từ cách nk vị trí.
         w.append(xor_bytes(w[i - nk], temp))
 
-    return [w[i*4:(i+1)*4] for i in range(len(w) // 4)]
+    # Chia danh sách các từ (w) thành các trạng thái 4x4 (các khóa con).
+    return [w[i * 4:(i + 1) * 4] for i in range(len(w) // 4)]
+
 
 
 def add_round_key(state: [[int]], key_schedule: [[[int]]], round: int):
+    """
+    Thực hiện phép XOR giữa state và round key tại một round.
+
+    Parameters:
+    - state: Một danh sách 2D (ma trận) chứa các giá trị byte của state.
+    - key_schedule: Một danh sách 3D chứa các round key được sinh ra từ khóa gốc.
+    - round: Chỉ số của round hiện tại, dùng để lấy round key tương ứng từ key_schedule.
+
+    Returns:
+    - Không trả về giá trị, nhưng sẽ cập nhật trực tiếp giá trị của state bằng cách XOR với round key.
+    """
     round_key = key_schedule[round]
     for r in range(len(state)):
         state[r] = [state[r][c] ^ round_key[r][c] for c in range(len(state[0]))]
 
 
 def sub_bytes(state: [[int]]):
+    """
+    Thực hiện thay thế từng byte trong state bằng giá trị từ bảng s_box.
+
+    Parameters:
+    - state: Một danh sách 2D (ma trận) chứa các giá trị byte của state.
+
+    Returns:
+    - Không trả về giá trị, nhưng sẽ cập nhật trực tiếp giá trị của state bằng cách thay thế từng byte
+      theo bảng s_box.
+    """
     for r in range(len(state)):
         state[r] = [s_box[state[r][c]] for c in range(len(state[0]))]
 
@@ -88,12 +181,34 @@ def shift_rows(state: [[int]]):
 
 
 def xtime(a: int) -> int:
-    if a & 0x80:
-        return ((a << 1) ^ 0x1b) & 0xff
-    return a << 1
+    """
+    Thực hiện phép nhân với 2 (xtime) trong trường GF(2^8).
+    Nếu giá trị a lớn hơn hoặc bằng 128 (bit cao nhất bằng 1), thì thực hiện phép nhân với 2 và XOR với 0x1b.
+    Nếu không, chỉ cần dịch trái đơn giản.
+
+    Parameters:
+    - a: Một số nguyên (byte) cần thực hiện phép nhân.
+
+    Returns:
+    - Một số nguyên (byte) sau khi thực hiện phép nhân với 2 trong trường hợp của GF(2^8).
+    """
+    if a & 0x80:  # Kiểm tra nếu bit cao nhất của a là 1
+        return ((a << 1) ^ 0x1b) & 0xff  # Dịch trái và XOR với 0x1b nếu bit cao nhất là 1
+    return a << 1  # Nếu bit cao nhất là 0, chỉ cần dịch trái
 
 
 def mix_column(col: [int]):
+    """
+    Thực hiện phép biến đổi MixColumns cho một cột (column) trong ma trận trạng thái.
+    Phép biến đổi này áp dụng các phép XOR và xtime lên các phần tử của cột, 
+    nhằm trộn các giá trị byte trong cột theo một quy tắc đặc biệt.
+
+    Parameters:
+    - col: Một danh sách chứa 4 số nguyên (bytes), đại diện cho một cột trong ma trận trạng thái.
+
+    Returns:
+    - Không trả về giá trị, nhưng sẽ cập nhật trực tiếp các phần tử của cột bằng cách thực hiện phép biến đổi MixColumns.
+    """
     c_0 = col[0]
     all_xor = col[0] ^ col[1] ^ col[2] ^ col[3]
     col[0] ^= all_xor ^ xtime(col[0] ^ col[1])
@@ -108,41 +223,69 @@ def mix_columns(state: [[int]]):
 
 
 def state_from_bytes(data: bytes) -> [[int]]:
+    """
+    Chuyển đổi dữ liệu từ dạng bytes thành dạng ma trận trạng thái (state).
+    Hàm này chia dữ liệu bytes thành các cột 4 byte để tạo thành một ma trận 2D.
+
+    Parameters:
+    - data: Dữ liệu đầu vào dưới dạng bytes, thường là dữ liệu của một khối.
+
+    Returns:
+    - Một danh sách 2D (ma trận), mỗi phần tử của ma trận chứa 4 byte từ dữ liệu đầu vào.
+    """
     state = [data[i*4:(i+1)*4] for i in range(len(data) // 4)]
     return state
 
 
 def bytes_from_state(state: [[int]]) -> bytes:
+    """
+    Chuyển đổi ma trận trạng thái (state) thành dạng bytes.
+    Hàm này kết hợp các cột trong ma trận để trả về dữ liệu dưới dạng một chuỗi byte.
+
+    Parameters:
+    - state: Một danh sách 2D (ma trận) chứa các giá trị byte của trạng thái.
+
+    Returns:
+    - Dữ liệu đầu ra dưới dạng bytes, được tạo thành từ các cột trong ma trận state.
+    """
     return bytes(state[0] + state[1] + state[2] + state[3])
 
 
 def aes_encryption(data: bytes, key: bytes) -> bytes:
 
+    # Tính toán độ dài của khóa (tính theo bit)
     key_bit_length = len(key) * 8
 
+    # Xác định số vòng mã hóa (nr) dựa trên độ dài khóa
     if key_bit_length == 128:
-        nr = 10
+        nr = 10  # 10 vòng cho khóa 128-bit
     elif key_bit_length == 192:
-        nr = 12
+        nr = 12  # 12 vòng cho khóa 192-bit
     else:  # 256-bit keys
-        nr = 14
+        nr = 14  # 14 vòng cho khóa 256-bit
 
+    # Chuyển đổi dữ liệu đầu vào thành ma trận trạng thái (state)
     state = state_from_bytes(data)
 
+    # Mở rộng khóa để tạo ra key schedule
     key_schedule = key_expansion(key)
 
+    # Thực hiện round đầu tiên (add_round_key)
     add_round_key(state, key_schedule, round=0)
 
+    # Thực hiện các vòng mã hóa từ round 1 đến round nr-1
     for round in range(1, nr):
-        sub_bytes(state)
-        shift_rows(state)
-        mix_columns(state)
-        add_round_key(state, key_schedule, round)
+        sub_bytes(state)  # Thực hiện phép thay thế byte
+        shift_rows(state)  # Thực hiện phép dịch các hàng
+        mix_columns(state)  # Thực hiện phép trộn cột
+        add_round_key(state, key_schedule, round)  # Thêm round key vào state
 
+    # Vòng mã hóa cuối cùng (không thực hiện phép mix_columns)
     sub_bytes(state)
     shift_rows(state)
     add_round_key(state, key_schedule, round=nr)
 
+    # Chuyển đổi ma trận trạng thái đã mã hóa thành bytes
     cipher = bytes_from_state(state)
     return cipher
 
